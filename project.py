@@ -2,917 +2,925 @@ import pygame
 import random
 import time
 import math
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
-SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 1000
-LANE_WIDTH = 60
-NUM_CAR_LANES_PER_DIR = 1
-NUM_TRAM_LANES_PER_DIR = 1
+# ==========================================
+# 1. ДИНАМИЧЕСКАЯ ИНИЦИАЛИЗАЦИЯ ПОД МОНИТОР
+# ==========================================
+pygame.init()
+pygame.font.init()
 
-SIMULATION_DURATION = 120
-
-TRAM_LANE_WIDTH = 40
-TRAM_TOTAL_ROAD_WIDTH = TRAM_LANE_WIDTH * NUM_TRAM_LANES_PER_DIR * 2
-TOTAL_CAR_ROAD_WIDTH = LANE_WIDTH * NUM_CAR_LANES_PER_DIR * 2
-TOTAL_ROAD_WIDTH = TOTAL_CAR_ROAD_WIDTH + TRAM_TOTAL_ROAD_WIDTH
-
-HALF_LANE = LANE_WIDTH / 2
-HALF_TRAM_LANE = TRAM_LANE_WIDTH / 2
+display_info = pygame.display.Info()
+SCREEN_WIDTH = max(1100, int(display_info.current_w * 0.88))
+SCREEN_HEIGHT = max(650, int(display_info.current_h * 0.80))
 
 FPS = 60
+SIMULATION_DURATION = 90
 
-CAR_LENGTH, CAR_WIDTH = 50, 30
-TRAM_LENGTH, TRAM_WIDTH = 100, 20
-BUS_LENGTH, BUS_WIDTH = 80, 30
+LANE_WIDTH = 52
+TRAM_LANE_WIDTH = 38
+AVENUE_Y = SCREEN_HEIGHT // 2
+HALF_LANE = LANE_WIDTH / 2
+HALF_TRAM = TRAM_LANE_WIDTH / 2
 
-COLOR_BLACK = (0, 0, 0)
+NUM_INTERSECTIONS = 2
+spacing = SCREEN_WIDTH // (NUM_INTERSECTIONS + 1)
+INTERSECTION_X_COORDS = [int((i + 1) * spacing) for i in range(NUM_INTERSECTIONS)]
+
+CAR_LENGTH, CAR_WIDTH = 48, 26
+BUS_LENGTH, BUS_WIDTH = 80, 28
+TRAM_LENGTH, TRAM_WIDTH = 110, 22
+
+COLOR_BLACK = (15, 15, 20)
+COLOR_ROAD = (48, 48, 54)
+COLOR_TRAM_BALLAST = (34, 34, 40)
+COLOR_RAIL = (180, 180, 190)
+COLOR_MARKING = (230, 230, 230)
+COLOR_STOP_LINE = (240, 50, 50)
+COLOR_BOX_GRID = (85, 75, 35)
 COLOR_WHITE = (255, 255, 255)
-COLOR_GREY = (150, 150, 150)
-COLOR_DARK_TRAM_ROAD = (80, 80, 80)
-COLOR_GREEN = (0, 255, 0)
-COLOR_RED = (255, 0, 0)
-COLOR_YELLOW = (255, 255, 0)
-COLOR_BLUE_CAR = (0, 0, 200)
-COLOR_PURPLE_TRAM = (150, 0, 150)
-COLOR_DARK_BLUE_BUS = (0, 50, 150)
-COLOR_LANE_MARKER = (255, 255, 255)
-COLOR_TRAM_LIGHT_WHITE = (200, 200, 200)
 
-COLLISION_BUFFER = 40
-LIGHT_STOP_DISTANCE = 60
-TRAFFIC_LIGHT_ACTIVATE_DISTANCE = 300
+COLOR_CAR = (45, 130, 240)
+COLOR_BUS = (240, 150, 20)
+COLOR_TRAM = (190, 45, 190)
 
-VEHICLE_SPEED = 4
-VEHICLE_SPAWN_CHANCE = 0.015
-BUS_PRIORITY_WEIGHT = 1
-TRAM_PRIORITY_WEIGHT = 1
+COLOR_RED = (255, 40, 40)
+COLOR_YELLOW = (255, 215, 30)
+COLOR_GREEN = (40, 235, 60)
+COLOR_LUNAR_WHITE = (220, 235, 255)
 
-FIXED_GREEN_TIME = 22
-MIN_GREEN_TIME_ADAPTIVE = 3
-MAX_GREEN_TIME_ADAPTIVE = 40
-YELLOW_TIME = 1
-TRAM_GREEN_TIME_MULTIPLIER = 1
-ADAPTIVE_QUEUE_COEFF = 0.3
+VEHICLE_SPEED = 3.6
+COLLISION_BUFFER = 26
+LIGHT_STOP_DISTANCE = 55
 
-CENTER_X = SCREEN_WIDTH // 2
-CENTER_Y = SCREEN_HEIGHT // 2
+SPAWN_CHANCE_AVENUE = 0.038
+SPAWN_CHANCE_CROSS = 0.015
 
-CROSS_LEFT = CENTER_X - TOTAL_ROAD_WIDTH // 2
-CROSS_RIGHT = CENTER_X + TOTAL_ROAD_WIDTH // 2
-CROSS_TOP = CENTER_Y - TOTAL_ROAD_WIDTH // 2
-CROSS_BOTTOM = CENTER_Y + TOTAL_ROAD_WIDTH // 2
+BUS_PRIORITY_WEIGHT = 1.4
+TRAM_PRIORITY_WEIGHT = 2.4
 
+# Безопасные переходные интервалы
+YELLOW_TIME = 2.0
+ALL_RED_TIME = 1.5
+ADAPTIVE_ALL_RED = 0.8  # Динамическая срезка мертвого времени перекрестка
 
-def setup_lane_centers():
-    centers = {}
+# Фиксированный режим (цикл = 43.0 с)
+FIXED_GREEN_AVENUE = 24.0
+FIXED_GREEN_CROSS = 12.0
 
-    x_tram_n = CENTER_X + HALF_TRAM_LANE
-    centers['N0T'] = {'x': x_tram_n, 'y_start': SCREEN_HEIGHT, 'type': 'tram'}
-    x_tram_s = CENTER_X - HALF_TRAM_LANE
-    centers['S0T'] = {'x': x_tram_s, 'y_start': 0, 'type': 'tram'}
-
-    x_car_n = x_tram_n + HALF_TRAM_LANE + HALF_LANE
-    centers['N0C'] = {'x': x_car_n, 'y_start': SCREEN_HEIGHT, 'type': 'car'}
-
-    x_car_s = x_tram_s - HALF_TRAM_LANE - HALF_LANE
-    centers['S0C'] = {'x': x_car_s, 'y_start': 0, 'type': 'car'}
-
-    y_car_w = CENTER_Y + HALF_LANE
-    centers[f'W0C'] = {'x_start': 0, 'y': y_car_w, 'type': 'car'}
-
-    y_car_e = CENTER_Y - HALF_LANE
-    centers[f'E0C'] = {'x_start': SCREEN_WIDTH, 'y': y_car_e, 'type': 'car'}
-
-    return centers
+# Адаптивный режим: динамический сжатый цикл (28 - 34 с)
+MIN_ADAPTIVE_AVENUE = 16.0
+MAX_ADAPTIVE_AVENUE = 21.0
+MIN_ADAPTIVE_CROSS = 6.0
+MAX_ADAPTIVE_CROSS = 9.0
 
 
-LANE_CENTERS = setup_lane_centers()
+# ==========================================
+# 2. СВЕТОФОРНЫЕ ОБЪЕКТЫ
+# ==========================================
+class TrafficLight:
+    def __init__(self, x: int, y: int, orientation: str = 'vertical'):
+        self.x = x
+        self.y = y
+        self.orientation = orientation
+        self.state = 'red'
+        self.timer = 0.0
+
+    def update(self, dt: float):
+        self.timer = max(0.0, self.timer - dt)
+
+    def draw(self, screen: pygame.Surface, font: pygame.font.Font, show_timer: bool = True):
+        r_c = COLOR_RED if self.state == 'red' else (50, 10, 10)
+        y_c = COLOR_YELLOW if self.state == 'yellow' else (50, 45, 5)
+        g_c = COLOR_GREEN if self.state == 'green' else (10, 45, 15)
+        r = 7
+
+        if self.orientation == 'vertical':
+            pygame.draw.rect(screen, (20, 20, 25), (self.x - 11, self.y - 28, 22, 56), border_radius=4)
+            pygame.draw.circle(screen, r_c, (self.x, self.y - 18), r)
+            pygame.draw.circle(screen, y_c, (self.x, self.y), r)
+            pygame.draw.circle(screen, g_c, (self.x, self.y + 18), r)
+            tx, ty = self.x + 15, self.y - 8
+        else:
+            pygame.draw.rect(screen, (20, 20, 25), (self.x - 28, self.y - 11, 56, 22), border_radius=4)
+            pygame.draw.circle(screen, r_c, (self.x - 18, self.y), r)
+            pygame.draw.circle(screen, y_c, (self.x, self.y), r)
+            pygame.draw.circle(screen, g_c, (self.x + 18, self.y), r)
+            tx, ty = self.x - 8, self.y + 14
+
+        if show_timer:
+            num = font.render(str(math.ceil(self.timer)), True, COLOR_WHITE)
+            screen.blit(num, (tx, ty))
 
 
+class TramTrafficLight:
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+        self.state = 'red'
+        self.timer = 0.0
+
+    def update(self, dt: float):
+        self.timer = max(0.0, self.timer - dt)
+
+    def draw(self, screen: pygame.Surface, font: pygame.font.Font, show_timer: bool = True):
+        pygame.draw.rect(screen, (25, 25, 30), (self.x - 18, self.y - 18, 36, 36), border_radius=4)
+        active = COLOR_LUNAR_WHITE if self.state == 'green' else (45, 45, 55)
+        top_c = COLOR_RED if self.state == 'red' else active
+
+        pygame.draw.circle(screen, top_c, (self.x - 10, self.y - 9), 4)
+        pygame.draw.circle(screen, top_c, (self.x, self.y - 9), 4)
+        pygame.draw.circle(screen, top_c, (self.x + 10, self.y - 9), 4)
+        pygame.draw.circle(screen, active, (self.x, self.y + 9), 4)
+
+        if show_timer:
+            num = font.render(str(math.ceil(self.timer)), True, COLOR_WHITE)
+            screen.blit(num, (self.x + 22, self.y - 8))
+
+
+# ==========================================
+# 3. ТРАНСПОРТНЫЕ СРЕДСТВА
+# ==========================================
 class Vehicle(pygame.sprite.Sprite):
-
-    def __init__(self, x, y, direction, lane_key, vehicle_type='car'):
+    def __init__(self, x: float, y: float, direction: str, lane_id: str,
+                 vehicle_type: str = 'car', origin_intersection: Optional[int] = None):
         super().__init__()
+        self.x = float(x)
+        self.y = float(y)
         self.direction = direction
-        self.lane_key = lane_key
-        self.lane_type = lane_key[-1]
+        self.lane_id = lane_id
         self.vehicle_type = vehicle_type
+        self.speed = VEHICLE_SPEED
+        self.origin_intersection = origin_intersection
 
         self.stopped = False
         self.stopped_by_light = False
-        self.stopped_by_collision = False
-        self.stopped_by_crossing_traffic = False
-        self.wait_start_time = time.time()
-        self.entered_cross = False
-        self.speed = VEHICLE_SPEED
+        self.stopped_by_car = False
+        self.stopped_by_gridlock = False
+        self.wait_start_time: Optional[float] = None
+        self.total_wait_time = 0.0
 
-        if self.vehicle_type == 'tram':
-            length, width = TRAM_LENGTH, TRAM_WIDTH
-            color = COLOR_PURPLE_TRAM
-        elif self.vehicle_type == 'bus':
-            length, width = BUS_LENGTH, BUS_WIDTH
-            color = COLOR_DARK_BLUE_BUS
+        if self.direction == 'EB':
+            self.target_intersection_idx = 0
+        elif self.direction == 'WB':
+            self.target_intersection_idx = NUM_INTERSECTIONS - 1
         else:
-            length, width = CAR_LENGTH, CAR_WIDTH
-            color = COLOR_BLUE_CAR
+            self.target_intersection_idx = origin_intersection
 
-        self.image = pygame.Surface((length, width))
-        self.image.fill(color)
+        if vehicle_type == 'tram':
+            self.length, self.width = TRAM_LENGTH, TRAM_WIDTH
+            self.color = COLOR_TRAM
+        elif vehicle_type == 'bus':
+            self.length, self.width = BUS_LENGTH, BUS_WIDTH
+            self.color = COLOR_BUS
+        else:
+            self.length, self.width = CAR_LENGTH, CAR_WIDTH
+            self.color = COLOR_CAR
 
-        angle = {'N': 90, 'S': -90, 'E': 180, 'W': 0}.get(direction, 0)
-        self.image = pygame.transform.rotate(self.image, angle)
+        self.base_image = pygame.Surface((self.length, self.width), pygame.SRCALPHA)
+        self.base_image.fill(self.color)
+        pygame.draw.rect(self.base_image, (255, 255, 220), (self.length - 4, 2, 4, 6))
+        pygame.draw.rect(self.base_image, (255, 255, 220), (self.length - 4, self.width - 8, 4, 6))
 
-        self.rect = self.image.get_rect(center=(x, y))
+        angle_map = {'EB': 0, 'WB': 180, 'SB': -90, 'NB': 90}
+        self.image = pygame.transform.rotate(self.base_image, angle_map[self.direction])
+        self.rect = self.image.get_rect(center=(int(self.x), int(self.y)))
 
-    def check_entered_cross(self):
-        is_on_cross = (
-                self.rect.right > CROSS_LEFT and
-                self.rect.left < CROSS_RIGHT and
-                self.rect.bottom > CROSS_TOP and
-                self.rect.top < CROSS_BOTTOM
-        )
-        self.entered_cross = is_on_cross
-
-    def update(self, vehicles_ahead: List['Vehicle']):
-        should_stop_for_collision = False
-        for other in vehicles_ahead:
-            distance = float('inf')
-
-            if self.direction == 'N' and other.rect.bottom < self.rect.top:
-                distance = self.rect.top - other.rect.bottom
-            elif self.direction == 'S' and other.rect.top > self.rect.bottom:
-                distance = other.rect.top - self.rect.bottom
-            elif self.direction == 'W' and other.rect.left > self.rect.right:
-                distance = other.rect.left - self.rect.right
-            elif self.direction == 'E' and other.rect.right < self.rect.left:
-                distance = self.rect.left - other.rect.right
-            else:
-                continue
-
-            if distance < COLLISION_BUFFER:
-                should_stop_for_collision = True
-                break
-
-        self.stopped_by_collision = should_stop_for_collision
-
-        is_truly_stopped = self.stopped_by_light or self.stopped_by_collision
-
-        if is_truly_stopped:
+    def update_position(self, sim_time: float):
+        should_wait = self.stopped_by_light or self.stopped_by_car or self.stopped_by_gridlock
+        if should_wait:
             if not self.stopped:
-                self.wait_start_time = time.time()
-            self.stopped = True
+                self.stopped = True
+                self.wait_start_time = sim_time
         else:
+            if self.stopped and self.wait_start_time is not None:
+                self.total_wait_time += (sim_time - self.wait_start_time)
+                self.wait_start_time = None
             self.stopped = False
 
         if not self.stopped:
-            self.move_forward()
+            if self.direction == 'EB':
+                self.x += self.speed
+            elif self.direction == 'WB':
+                self.x -= self.speed
+            elif self.direction == 'SB':
+                self.y += self.speed
+            elif self.direction == 'NB':
+                self.y -= self.speed
 
-    def move_forward(self):
-        if self.direction == 'N':
-            self.rect.y -= self.speed
-        elif self.direction == 'S':
-            self.rect.y += self.speed
-        elif self.direction == 'W':
-            self.rect.x += self.speed
-        elif self.direction == 'E':
-            self.rect.x -= self.speed
-
-    def set_stop_by_light(self, should_stop):
-        self.stopped_by_light = should_stop
-
-    def set_stop_by_crossing(self, should_stop):
-        self.stopped_by_crossing_traffic = should_stop
+            self.rect.center = (round(self.x), round(self.y))
 
 
-class TramVehicle(Vehicle):
-
-    def __init__(self, x, y, direction, lane_key):
-        super().__init__(x, y, direction, lane_key, vehicle_type='tram')
-
-
-class BusVehicle(Vehicle):
-
-    def __init__(self, x, y, direction, lane_key):
-        super().__init__(x, y, direction, lane_key, vehicle_type='bus')
-
-
-class TrafficLight:
-
-    def __init__(self, x, y, direction_type, direction):
-        self.x = x
-        self.y = y
-        self.direction_type = direction_type
-        self.direction = direction
-        self.state = 'red'
-        self.timer = 0.0
-        self.last_green_duration = 0.0
-        self.is_tram = False
-        self.current_time_display = 0
-
-    def update(self, dt):
-        self.timer -= dt
-        if self.timer < 0:
-            self.timer = 0.0
-
-        self.current_time_display = math.ceil(self.timer)
-        if self.timer <= 0.01:
-            self.current_time_display = 0
-
-    def draw(self, screen):
-        red_color = COLOR_RED if self.state == 'red' else (50, 0, 0)
-        yellow_color = COLOR_YELLOW if self.state == 'yellow' else (50, 50, 0)
-        green_color = COLOR_GREEN if self.state == 'green' else (0, 50, 0)
-
-        if self.direction_type == 'vertical':
-            pygame.draw.circle(screen, red_color, (self.x, self.y - 25), 10)
-            pygame.draw.circle(screen, yellow_color, (self.x, self.y), 10)
-            pygame.draw.circle(screen, green_color, (self.x, self.y + 25), 10)
-            text_pos = (self.x + 15, self.y - 10)
-        else:
-            pygame.draw.circle(screen, red_color, (self.x + 25, self.y), 10)
-            pygame.draw.circle(screen, yellow_color, (self.x, self.y), 10)
-            pygame.draw.circle(screen, green_color, (self.x - 25, self.y), 10)
-            text_pos = (self.x, self.y + 15)
-
-        font = pygame.font.SysFont(None, 24)
-        text = font.render(str(self.current_time_display), True, COLOR_WHITE)
-        screen.blit(text, text_pos)
-
-
-class TramTrafficLight(TrafficLight):
-
-    def __init__(self, x, y, direction):
-        super().__init__(x, y, 'vertical', direction)
-        self.state = 'red'
-        self.is_tram = True
-
-    def draw(self, screen):
-
-        RED_LIGHT = COLOR_RED
-        INACTIVE_LIGHT_COLOR = (50, 50, 50)
-        WHITE_LUNAR_LIGHT = COLOR_TRAM_LIGHT_WHITE
-
-        sections = [
-            (0, -15),
-            (-15, 0),
-            (15, 0),
-            (0, 15),
-        ]
-
-        if self.state == 'green':
-            for dx, dy in sections:
-                pygame.draw.circle(screen, WHITE_LUNAR_LIGHT, (self.x + dx, self.y + dy), 8)
-        else:
-            for dx, dy in sections[0:3]:
-                pygame.draw.circle(screen, RED_LIGHT, (self.x + dx, self.y + dy), 8)
-
-            dx, dy = sections[3]
-            pygame.draw.circle(screen, INACTIVE_LIGHT_COLOR, (self.x + dx, self.y + dy), 8)
-
-        font = pygame.font.SysFont(None, 24)
-        text = font.render(str(self.current_time_display), True, COLOR_WHITE)
-        screen.blit(text, (self.x + 25, self.y - 10))
-
-
-class Intersection:
-
-    spawn_log: List[Dict[str, Any]] = []
-    spawn_playback: List[Dict[str, Any]] = []
-    spawn_index: int = 0
-    dt_accumulator: float = 0.0
-
-    def __init__(self, mode='fixed', intersection_type='standard', spawn_data: List[Dict[str, Any]] | None = None):
+# ==========================================
+# 4. УЗЕЛ ПЕРЕКРЕСТКА
+# ==========================================
+class IntersectionNode:
+    def __init__(self, idx: int, center_x: int, center_y: int, mode: str, offset: float = 0.0):
+        self.idx = idx
+        self.center_x = center_x
+        self.center_y = center_y
         self.mode = mode
-        self.intersection_type = intersection_type
+        self.offset = offset
+
+        self.box_left = center_x - LANE_WIDTH
+        self.box_right = center_x + LANE_WIDTH
+        self.box_top = center_y - (TRAM_LANE_WIDTH + LANE_WIDTH)
+        self.box_bottom = center_y + (TRAM_LANE_WIDTH + LANE_WIDTH)
+        self.rect = pygame.Rect(self.box_left, self.box_top,
+                                self.box_right - self.box_left,
+                                self.box_bottom - self.box_top)
+
+        self.light_avenue_eb = TrafficLight(self.box_left - 18, self.center_y + TRAM_LANE_WIDTH + HALF_LANE, 'horizontal')
+        self.light_avenue_wb = TrafficLight(self.box_right + 18, self.center_y - TRAM_LANE_WIDTH - HALF_LANE, 'horizontal')
+        self.light_tram = TramTrafficLight(self.box_left - 24, self.center_y)
+
+        self.light_cross_sb = TrafficLight(self.center_x - HALF_LANE, self.box_top - 20, 'vertical')
+        self.light_cross_nb = TrafficLight(self.center_x + HALF_LANE, self.box_bottom + 20, 'vertical')
+
+        self.phase = 'AVENUE_GREEN'
+        self.phase_timer = FIXED_GREEN_AVENUE
+
+        self._sync_all_lights()
+
+    def is_inside_box(self, v: Vehicle) -> bool:
+        return self.rect.colliderect(v.rect)
+
+    def is_past_box(self, v: Vehicle) -> bool:
+        if v.direction == 'EB':
+            return v.rect.left >= self.box_right
+        elif v.direction == 'WB':
+            return v.rect.right <= self.box_left
+        elif v.direction == 'SB':
+            return v.rect.top >= self.box_bottom
+        elif v.direction == 'NB':
+            return v.rect.bottom <= self.box_top
+        return False
+
+    def get_distance_to_stop_line(self, v: Vehicle) -> float:
+        if v.direction == 'EB':
+            return self.box_left - v.rect.right
+        elif v.direction == 'WB':
+            return v.rect.left - self.box_right
+        elif v.direction == 'SB':
+            return self.box_top - v.rect.bottom
+        elif v.direction == 'NB':
+            return v.rect.top - self.box_bottom
+        return float('inf')
+
+    def set_phase(self, new_phase: str, duration: float):
+        self.phase = new_phase
+        self.phase_timer = duration
+        self._sync_all_lights()
+
+    def update_fixed(self, dt: float):
+        self.phase_timer = max(0.0, self.phase_timer - dt)
+        for lt in [self.light_avenue_eb, self.light_avenue_wb, self.light_cross_sb, self.light_cross_nb]:
+            lt.update(dt)
+        self.light_tram.update(dt)
+
+        if self.phase_timer <= 0:
+            if self.phase == 'AVENUE_GREEN':
+                self.set_phase('AVENUE_YELLOW', YELLOW_TIME)
+            elif self.phase == 'AVENUE_YELLOW':
+                self.set_phase('ALL_RED_1', ALL_RED_TIME)
+            elif self.phase == 'ALL_RED_1':
+                self.set_phase('CROSS_GREEN', FIXED_GREEN_CROSS)
+            elif self.phase == 'CROSS_GREEN':
+                self.set_phase('CROSS_YELLOW', YELLOW_TIME)
+            elif self.phase == 'CROSS_YELLOW':
+                self.set_phase('ALL_RED_2', ALL_RED_TIME)
+            elif self.phase == 'ALL_RED_2':
+                self.set_phase('AVENUE_GREEN', FIXED_GREEN_AVENUE)
+
+    def update_lights_only(self, dt: float):
+        for lt in [self.light_avenue_eb, self.light_avenue_wb, self.light_cross_sb, self.light_cross_nb]:
+            lt.update(dt)
+        self.light_tram.update(dt)
+
+    def _sync_all_lights(self):
+        if self.phase == 'AVENUE_GREEN':
+            for lt in [self.light_avenue_eb, self.light_avenue_wb]:
+                lt.state, lt.timer = 'green', self.phase_timer
+            self.light_tram.state, self.light_tram.timer = 'green', self.phase_timer
+            for lt in [self.light_cross_sb, self.light_cross_nb]:
+                lt.state, lt.timer = 'red', self.phase_timer + YELLOW_TIME + ALL_RED_TIME
+
+        elif self.phase == 'AVENUE_YELLOW':
+            for lt in [self.light_avenue_eb, self.light_avenue_wb]:
+                lt.state, lt.timer = 'yellow', self.phase_timer
+            self.light_tram.state, self.light_tram.timer = 'red', self.phase_timer
+            for lt in [self.light_cross_sb, self.light_cross_nb]:
+                lt.state, lt.timer = 'red', self.phase_timer + ALL_RED_TIME
+
+        elif self.phase in ('ALL_RED_1', 'ALL_RED_2'):
+            for lt in [self.light_avenue_eb, self.light_avenue_wb, self.light_cross_sb, self.light_cross_nb]:
+                lt.state, lt.timer = 'red', self.phase_timer
+            self.light_tram.state, self.light_tram.timer = 'red', self.phase_timer
+
+        elif self.phase == 'CROSS_GREEN':
+            for lt in [self.light_cross_sb, self.light_cross_nb]:
+                lt.state, lt.timer = 'green', self.phase_timer
+            for lt in [self.light_avenue_eb, self.light_avenue_wb]:
+                lt.state, lt.timer = 'red', self.phase_timer + YELLOW_TIME + ALL_RED_TIME
+            self.light_tram.state, self.light_tram.timer = 'red', self.phase_timer + YELLOW_TIME + ALL_RED_TIME
+
+        elif self.phase == 'CROSS_YELLOW':
+            for lt in [self.light_cross_sb, self.light_cross_nb]:
+                lt.state, lt.timer = 'yellow', self.phase_timer
+            for lt in [self.light_avenue_eb, self.light_avenue_wb]:
+                lt.state, lt.timer = 'red', self.phase_timer + ALL_RED_TIME
+            self.light_tram.state, self.light_tram.timer = 'red', self.phase_timer + ALL_RED_TIME
+
+    def draw(self, screen: pygame.Surface, font: pygame.font.Font):
+        pygame.draw.rect(screen, (34, 34, 30), self.rect)
+        pygame.draw.rect(screen, COLOR_STOP_LINE, self.rect, 2)
+        step = 16
+        for x in range(self.box_left, self.box_right + (self.box_bottom - self.box_top), step):
+            pygame.draw.line(screen, COLOR_BOX_GRID,
+                             (x, self.box_top),
+                             (x - (self.box_bottom - self.box_top), self.box_bottom), 1)
+
+        show_timer = (self.mode == 'fixed')
+
+        self.light_avenue_eb.draw(screen, font, show_timer=show_timer)
+        self.light_avenue_wb.draw(screen, font, show_timer=show_timer)
+        self.light_tram.draw(screen, font, show_timer=show_timer)
+        self.light_cross_sb.draw(screen, font, show_timer=show_timer)
+        self.light_cross_nb.draw(screen, font, show_timer=show_timer)
+
+
+# ==========================================
+# 5. СИМУЛЯТОР ПРОСПЕКТА
+# ==========================================
+class ArterialProspectSimulation:
+    def __init__(self, mode: str = 'fixed', spawn_playback: Optional[List[Dict[str, Any]]] = None):
+        self.mode = mode
+        self.spawn_playback = spawn_playback or []
+        self.spawn_log: List[Dict[str, Any]] = []
+        self.playback_idx = 0
+
         self.vehicles = pygame.sprite.Group()
-        self.stats = {'total_vehicles': 0, 'total_wait_time': 0.0,
-                      'total_tram_wait_time': 0.0, 'total_bus_wait_time': 0.0}
-        self.waiting_vehicles: Dict[int, float] = {}
-        self.queues: Dict[str, List[Dict[str, Any]]] = {'N': [], 'S': [], 'E': [], 'W': []}
-
-        self.light_stats = {'ns_cycles_count': 0, 'ew_cycles_count': 0,
-                            'ns_total_green_time': 0.0, 'ew_total_green_time': 0.0,
-                            'ns_tram_total_green_time': 0.0}
-
-        self.is_crossing_occupied = False
-
-        if spawn_data is not None:
-            self.spawn_playback = spawn_data
-            self.spawn_log = []
-        else:
-            self.spawn_playback = []
-            self.spawn_log = []
-
-        self._setup_traffic_lights()
-
-    def _setup_traffic_lights(self):
-        self.light_car_north = TrafficLight(LANE_CENTERS['N0C']['x'] + HALF_LANE, CROSS_BOTTOM - HALF_LANE, 'vertical',
-                                            'N')
-        self.light_car_south = TrafficLight(LANE_CENTERS['S0C']['x'] - HALF_LANE, CROSS_TOP + HALF_LANE, 'vertical',
-                                            'S')
-        self.lights_car_ns = [self.light_car_north, self.light_car_south]
-
-        self.light_car_west = TrafficLight(CROSS_LEFT + HALF_LANE, LANE_CENTERS['W0C']['y'] + HALF_LANE, 'horizontal',
-                                           'W')
-        self.light_car_east = TrafficLight(CROSS_RIGHT - HALF_LANE, LANE_CENTERS['E0C']['y'] - HALF_LANE, 'horizontal',
-                                           'E')
-        self.lights_car_ew = [self.light_car_west, self.light_car_east]
-
-        self.lights_tram_ns = []
-        if self.intersection_type == 'tram_line':
-            self.light_tram_north = TramTrafficLight(LANE_CENTERS['N0T']['x'] + HALF_TRAM_LANE,
-                                                     CROSS_BOTTOM - HALF_TRAM_LANE, 'N')
-            self.light_tram_south = TramTrafficLight(LANE_CENTERS['S0T']['x'] - HALF_TRAM_LANE,
-                                                     CROSS_TOP + HALF_TRAM_LANE, 'S')
-            self.lights_tram_ns = [self.light_tram_north, self.light_tram_south]
-
-        green_time_car = FIXED_GREEN_TIME if self.mode == 'fixed' else MIN_GREEN_TIME_ADAPTIVE
-        green_time_tram = green_time_car * TRAM_GREEN_TIME_MULTIPLIER
-
-        for light in self.lights_car_ns:
-            light.state = 'green'
-            light.timer = green_time_car
-            light.current_time_display = math.ceil(green_time_car)
-
-        for light in self.lights_tram_ns:
-            light.state = 'green'
-            light.timer = green_time_tram
-            light.current_time_display = math.ceil(green_time_tram)
-
-        for light in self.lights_car_ew:
-            light.state = 'red'
-            light.timer = 0
-            light.current_time_display = 0
-
-    def _check_for_waiting_traffic(self, directions: List[str]) -> bool:
-        has_waiting = False
-        for d in directions:
-            active_waiting = [v for v in self.vehicles
-                              if v.direction == d and v.stopped_by_light and not v.entered_cross]
-            if active_waiting:
-                has_waiting = True
-
-            pending_queue = [q for q in self.queues[d] if q['lane_key'].startswith(d)]
-            if pending_queue:
-                has_waiting = True
-
-        return has_waiting
-
-    def _lazy_switch_to_green(self, to_group: str, next_group: str):
-        is_ns_phase = (to_group == 'ns_car')
-        directions = ['N', 'S'] if is_ns_phase else ['E', 'W']
-
-        traffic_waiting = self._check_for_waiting_traffic(directions)
-
-        if is_ns_phase and self.lights_tram_ns:
-            tram_directions = [d for d in directions if f'{d}0T' in LANE_CENTERS]
-            if self._check_for_waiting_traffic(tram_directions):
-                traffic_waiting = True
-
-        if traffic_waiting or self.mode == 'fixed':
-            self._switch_to_green(to_group)
-
-            if is_ns_phase and self.lights_tram_ns:
-                self._switch_to_green('ns_tram')
-        else:
-            self._switch_to_red(to_group)
-            if to_group == 'ns_car' and self.lights_tram_ns:
-                self._switch_to_red('ns_tram')
-
-            self._switch_to_green(next_group)
-
-            if next_group == 'ns_car' and self.lights_tram_ns:
-                self._switch_to_green('ns_tram')
-
-    def update(self, dt):
-        self.dt_accumulator += dt
-        self.process_queues()
-        self.spawn_vehicles()
-
-        all_lights = self.lights_car_ns + self.lights_car_ew + self.lights_tram_ns
-        for light in all_lights:
-            light.update(dt)
-
-        if self.lights_car_ns[0].state == 'green' and self.lights_car_ns[0].timer <= 0:
-            self._switch_to_yellow('ns_car')
-            if self.lights_tram_ns:
-                self._switch_to_yellow('ns_tram')
-
-        elif self.lights_car_ew[0].state == 'green' and self.lights_car_ew[0].timer <= 0:
-            self._switch_to_yellow('ew_car')
-
-        elif self.lights_car_ns[0].state == 'yellow' and self.lights_car_ns[0].timer <= 0:
-            self._switch_to_red('ns_car')
-            if self.lights_tram_ns:
-                self._switch_to_red('ns_tram')
-            self._lazy_switch_to_green('ew_car', next_group='ns_car')
-
-        elif self.lights_car_ew[0].state == 'yellow' and self.lights_car_ew[0].timer <= 0:
-            self._switch_to_red('ew_car')
-            self._lazy_switch_to_green('ns_car', next_group='ew_car')
-
-        self.update_vehicles()
-
-        self.is_crossing_occupied = any(v.entered_cross for v in self.vehicles)
-
-    def _switch_to_yellow(self, from_group):
-        lights_to_switch = []
-        if from_group == 'ns_car':
-            lights_to_switch = self.lights_car_ns
-        elif from_group == 'ew_car':
-            lights_to_switch = self.lights_car_ew
-        elif from_group == 'ns_tram':
-            lights_to_switch = self.lights_tram_ns
-
-        for light in lights_to_switch:
-            if light.state == 'green':
-                light.state = 'yellow'
-                light.timer = YELLOW_TIME
-                light.last_green_duration = light.timer
-
-    def _switch_to_red(self, to_group):
-        lights_to_red = []
-        if to_group == 'ns_car':
-            lights_to_red = self.lights_car_ns
-        elif to_group == 'ew_car':
-            lights_to_red = self.lights_car_ew
-        elif to_group == 'ns_tram':
-            lights_to_red = self.lights_tram_ns
-
-        for light in lights_to_red:
-            if light.state != 'red':
-                light.state = 'red'
-                light.timer = 0
-
-    def _calculate_adaptive_time(self, directions: List[str], light_group_name: str) -> float:
-
-        car_queue_size = 0
-        tram_queue_size = 0
-        bus_queue_size = 0
-
-        for d in directions:
-            active_standing = [v for v in self.vehicles
-                               if v.direction == d and v.stopped_by_light and not v.entered_cross]
-            pending_queue = [v for v in self.queues[d]]
-
-            for v in active_standing:
-                if v.vehicle_type == 'car':
-                    car_queue_size += 1
-                elif v.vehicle_type == 'tram':
-                    tram_queue_size += 1
-                elif v.vehicle_type == 'bus':
-                    bus_queue_size += 1
-
-            for q in pending_queue:
-                if q['vehicle_type'] == 'car':
-                    car_queue_size += 1
-                elif q['vehicle_type'] == 'tram':
-                    tram_queue_size += 1
-                elif q['vehicle_type'] == 'bus':
-                    bus_queue_size += 1
-
-        total_wait_cost = car_queue_size + \
-                          TRAM_PRIORITY_WEIGHT * tram_queue_size + \
-                          BUS_PRIORITY_WEIGHT * bus_queue_size
-
-        new_time = MIN_GREEN_TIME_ADAPTIVE + ADAPTIVE_QUEUE_COEFF * total_wait_cost
-
-        if 'tram' in light_group_name:
-            new_time *= TRAM_GREEN_TIME_MULTIPLIER
-
-        return min(new_time, MAX_GREEN_TIME_ADAPTIVE)
-
-    def _switch_to_green(self, to_group):
-        lights_to_green = []
-        directions = []
-        if to_group == 'ns_car':
-            lights_to_green = self.lights_car_ns
-            directions = ['N', 'S']
-            self.light_stats['ns_cycles_count'] += 1
-        elif to_group == 'ew_car':
-            lights_to_green = self.lights_car_ew
-            directions = ['E', 'W']
-            self.light_stats['ew_cycles_count'] += 1
-        elif to_group == 'ns_tram':
-            lights_to_green = self.lights_tram_ns
-            directions = ['N', 'S']
-
-        if self.mode == 'fixed':
-            green_time = FIXED_GREEN_TIME * (TRAM_GREEN_TIME_MULTIPLIER if 'tram' in to_group else 1)
-        else:
-            green_time = self._calculate_adaptive_time(directions, to_group)
-
-        for light in lights_to_green:
-            light.state = 'green'
-            light.timer = green_time
-            light.current_time_display = math.ceil(green_time)
-
-            if to_group == 'ns_car':
-                self.light_stats['ns_total_green_time'] += green_time
-            elif to_group == 'ew_car':
-                self.light_stats['ew_total_green_time'] += green_time
-            elif to_group == 'ns_tram':
-                self.light_stats['ns_tram_total_green_time'] += green_time
-
-    def get_first_vehicle_in_lane(self, lane_key: str) -> Tuple[Vehicle | None, float]:
-        direction = lane_key[0]
-        vehicles_in_lane = [v for v in self.vehicles if v.lane_key == lane_key]
-
-        first_vehicle = None
-        min_distance_to_stop = float('inf')
-
-        for vehicle in vehicles_in_lane:
-            dist = float('inf')
-
-            if direction == 'N':
-                dist = vehicle.rect.top - CROSS_BOTTOM
-            elif direction == 'S':
-                dist = CROSS_TOP - vehicle.rect.bottom
-            elif direction == 'W':
-                dist = CROSS_LEFT - vehicle.rect.right
-            elif direction == 'E':
-                dist = vehicle.rect.left - CROSS_RIGHT
-            else:
-                continue
-
-            if dist > 0 and dist < min_distance_to_stop:
-                min_distance_to_stop = dist
-                first_vehicle = vehicle
-
-        return first_vehicle, min_distance_to_stop
-
-    def update_vehicles(self):
-        all_vehicles_list = list(self.vehicles)
-
-        first_vehicles_data: Dict[str, Tuple[Vehicle | None, float]] = {}
-        for lane_key in LANE_CENTERS.keys():
-            first_vehicles_data[lane_key] = self.get_first_vehicle_in_lane(lane_key)
-
-        for vehicle in all_vehicles_list:
-            vehicle.check_entered_cross()
-
-            current_light: TrafficLight
-            if vehicle.direction in ['N', 'S']:
-                if vehicle.lane_type == 'T' and self.intersection_type == 'tram_line':
-                    current_light = self.light_tram_north if vehicle.direction == 'N' else self.light_tram_south
-                else:
-                    current_light = self.light_car_north if vehicle.direction == 'N' else self.light_car_south
-            else:
-                current_light = self.light_car_west if vehicle.direction == 'W' else self.light_car_east
-
-            vehicles_in_same_lane = [v for v in all_vehicles_list
-                                     if v != vehicle and v.lane_key == vehicle.lane_key]
-
-            first_vehicle_in_lane, distance_to_cross_stop = first_vehicles_data.get(vehicle.lane_key,
-                                                                                    (None, float('inf')))
-            is_first_in_lane = first_vehicle_in_lane == vehicle
-
-            should_stop = False
-
-            if (current_light.state in ['red', 'yellow']) and not vehicle.entered_cross:
-
-                is_ns_vehicle = vehicle.direction in ['N', 'S']
-                is_crossing_blocked_for_me = any(
-                    other_vehicle.entered_cross
-                    for other_vehicle in all_vehicles_list
-                    if (other_vehicle.direction in ['N', 'S']) != is_ns_vehicle
-                )
-
-                is_in_stop_zone = distance_to_cross_stop > 0 and distance_to_cross_stop < LIGHT_STOP_DISTANCE
-
-                if is_first_in_lane and is_in_stop_zone:
-                    should_stop = True
-
-                elif is_crossing_blocked_for_me and is_first_in_lane and distance_to_cross_stop < CAR_LENGTH * 2:
-                    should_stop = True
-
-            vehicle.set_stop_by_light(should_stop)
-
-            vehicle_id = id(vehicle)
-            if vehicle.stopped_by_light and vehicle_id not in self.waiting_vehicles:
-                self.waiting_vehicles[vehicle_id] = time.time()
-            elif not vehicle.stopped_by_light and vehicle_id in self.waiting_vehicles:
-                wait_time = time.time() - self.waiting_vehicles.pop(vehicle_id)
-                self.stats['total_wait_time'] += wait_time
-                if vehicle.vehicle_type == 'tram':
-                    self.stats['total_tram_wait_time'] += wait_time
-                elif vehicle.vehicle_type == 'bus':
-                    self.stats['total_bus_wait_time'] += wait_time
-
-            vehicle.update(vehicles_in_same_lane)
-
-            if not (0 - 100 <= vehicle.rect.x < SCREEN_WIDTH + 100 and 0 - 100 <= vehicle.rect.y < SCREEN_HEIGHT + 100):
-                self.stats['total_vehicles'] += 1
-                if id(vehicle) in self.waiting_vehicles:
-                    wait_time = time.time() - self.waiting_vehicles.pop(id(vehicle))
-                    self.stats['total_wait_time'] += wait_time
-                    if vehicle.vehicle_type == 'tram':
-                        self.stats['total_tram_wait_time'] += wait_time
-                    elif vehicle.vehicle_type == 'bus':
-                        self.stats['total_bus_wait_time'] += wait_time
-                vehicle.kill()
-
-    def spawn_vehicles(self):
-
-        if self.spawn_playback:
-            while self.spawn_index < len(self.spawn_playback) and \
-                    self.spawn_playback[self.spawn_index]['time'] <= self.dt_accumulator:
-                spawn_data = self.spawn_playback[self.spawn_index]
-                self.queues[spawn_data['direction']].append({
-                    'vehicle_type': spawn_data['vehicle_type'],
-                    'lane_key': spawn_data['lane_key']
-                })
-                self.spawn_index += 1
-            return
-
-        if random.random() < VEHICLE_SPAWN_CHANCE:
-
-            direction = random.choice(['N', 'S', 'E', 'W'])
-            lane_key = None
-            vehicle_type = None
-
-            if direction in ['N', 'S']:
-                if self.intersection_type == 'tram_line':
-                    lane_type_choice = random.choices(['car', 'bus', 'tram'], weights=[0.6, 0.2, 0.2], k=1)[0]
-                else:
-                    lane_type_choice = random.choices(['car', 'bus'], weights=[0.8, 0.2], k=1)[0]
-
-                if lane_type_choice == 'tram':
-                    vehicle_type = 'tram'
-                    lane_key = f'{direction}0T'
-                elif lane_type_choice == 'bus':
-                    vehicle_type = 'bus'
-                    lane_key = f'{direction}0C'
-                else:
-                    vehicle_type = 'car'
-                    lane_key = f'{direction}0C'
-            elif direction in ['E', 'W']:
-                lane_type_choice = random.choices(['car', 'bus'], weights=[0.8, 0.2], k=1)[0]
-                vehicle_type = lane_type_choice
-                lane_key = f'{direction}0C'
-
-            if lane_key in LANE_CENTERS:
-                spawn_record = {
-                    'time': self.dt_accumulator,
-                    'direction': direction,
-                    'vehicle_type': vehicle_type,
-                    'lane_key': lane_key
-                }
-
-                self.spawn_log.append(spawn_record)
-
-                self.queues[direction].append({
-                    'vehicle_type': vehicle_type,
-                    'lane_key': lane_key
-                })
-
-    def process_queues(self):
-
-        for direction in ['N', 'S', 'E', 'W']:
-            for lane_key in [k for k in LANE_CENTERS.keys() if k.startswith(direction)]:
-
-                next_car_in_queue = next((car for car in self.queues[direction] if car['lane_key'] == lane_key), None)
-                if next_car_in_queue is None:
-                    continue
-
-                vehicle_type = next_car_in_queue['vehicle_type']
-
-                if vehicle_type == 'tram':
-                    next_vehicle_length = TRAM_LENGTH
-                elif vehicle_type == 'bus':
-                    next_vehicle_length = BUS_LENGTH
-                else:
-                    next_vehicle_length = CAR_LENGTH
-
-                active_vehicles = sorted([v for v in self.vehicles if v.lane_key == lane_key],
-                                         key=lambda v: (
-                                             v.rect.bottom if v.direction == 'N' else v.rect.top if v.direction == 'S' else v.rect.left if v.direction == 'W' else v.rect.right),
-                                         reverse=(direction in ['N', 'E']))
-
-                can_spawn = False
-                if active_vehicles:
-                    last_vehicle = active_vehicles[0]
-
-                    if direction == 'N':
-                        distance_to_edge = SCREEN_HEIGHT - last_vehicle.rect.bottom
-                    elif direction == 'S':
-                        distance_to_edge = last_vehicle.rect.top
-                    elif direction == 'W':
-                        distance_to_edge = last_vehicle.rect.left
-                    elif direction == 'E':
-                        distance_to_edge = SCREEN_WIDTH - last_vehicle.rect.right
-
-                    if distance_to_edge > (next_vehicle_length + COLLISION_BUFFER * 2):
-                        can_spawn = True
-                else:
-                    can_spawn = True
-
-                if can_spawn:
-                    self.queues[direction].remove(next_car_in_queue)
-
-                    center_coords = LANE_CENTERS[lane_key]
-
-                    if direction in ['N', 'S']:
-                        y_offset = (next_vehicle_length // 2) * (1 if direction == 'S' else -1)
-                        start_x = center_coords['x']
-                        start_y = center_coords['y_start'] + y_offset
-                    else:
-                        x_offset = (next_vehicle_length // 2) * (1 if direction == 'W' else -1)
-                        start_y = center_coords['y']
-                        start_x = center_coords['x_start'] + x_offset
-
-                    if vehicle_type == 'tram':
-                        self.vehicles.add(TramVehicle(start_x, start_y, direction, lane_key))
-                    elif vehicle_type == 'bus':
-                        self.vehicles.add(BusVehicle(start_x, start_y, direction, lane_key))
-                    else:
-                        self.vehicles.add(Vehicle(start_x, start_y, direction, lane_key, vehicle_type))
-
+        self.finished_vehicles: List[Vehicle] = []
+
+        # Синхронная волна: оба узла открываются в унисон
+        self.intersections: List[IntersectionNode] = []
+        for i, x in enumerate(INTERSECTION_X_COORDS):
+            node = IntersectionNode(i, x, AVENUE_Y, mode, offset=0.0)
+            self.intersections.append(node)
+
+        # Магистральный контроллер
+        self.adaptive_phase = 'AVENUE_GREEN'
+        self.adaptive_timer = MIN_ADAPTIVE_AVENUE
+        self.adaptive_time_in_phase = 0.0
+
+        self.entry_queues: Dict[str, List[Dict[str, Any]]] = {
+            'EB_car': [], 'EB_tram': [],
+            'WB_car': [], 'WB_tram': []
+        }
+        for k in range(NUM_INTERSECTIONS):
+            self.entry_queues[f'SB_{k}'] = []
+            self.entry_queues[f'NB_{k}'] = []
+
+    def get_lane_center_y(self, lane_id: str) -> float:
+        if lane_id == 'EB_car':
+            return AVENUE_Y + TRAM_LANE_WIDTH + HALF_LANE
+        elif lane_id == 'EB_tram':
+            return AVENUE_Y + HALF_TRAM
+        elif lane_id == 'WB_tram':
+            return AVENUE_Y - HALF_TRAM
+        elif lane_id == 'WB_car':
+            return AVENUE_Y - TRAM_LANE_WIDTH - HALF_LANE
+        return AVENUE_Y
+
+    def get_cross_center_x(self, node_idx: int, direction: str) -> float:
+        node_x = INTERSECTION_X_COORDS[node_idx]
+        return node_x - HALF_LANE if direction == 'SB' else node_x + HALF_LANE
+
+    def set_master_adaptive_phase(self, new_phase: str, duration: float):
+        self.adaptive_phase = new_phase
+        self.adaptive_timer = duration
+        self.adaptive_time_in_phase = 0.0
+        for node in self.intersections:
+            node.set_phase(new_phase, duration)
+
+    def update_adaptive_coordination(self, dt: float):
+        self.adaptive_time_in_phase += dt
+        self.adaptive_timer = max(0.0, self.adaptive_timer - dt)
+
+        # Подсчет очередей на боковых улицах
+        cross_counts = []
+        for node in self.intersections:
+            q_cnt = sum(
+                1 for v in self.vehicles
+                if v.target_intersection_idx == node.idx and v.direction in ('SB', 'NB') and 0 <= node.get_distance_to_stop_line(v) <= 240
+            )
+            q_cnt += len(self.entry_queues.get(f'SB_{node.idx}', []))
+            q_cnt += len(self.entry_queues.get(f'NB_{node.idx}', []))
+            cross_counts.append(q_cnt)
+
+        total_cross_waiting = sum(cross_counts)
+        max_cross_q = max(cross_counts) if cross_counts else 0
+
+        # Локальная детекция трамвая на подходе (в пределах 240 px от любого перекрестка)
+        tram_close_to_stop = False
+        for node in self.intersections:
+            for v in self.vehicles:
+                if v.vehicle_type == 'tram' and v.direction in ('EB', 'WB'):
+                    dist = node.get_distance_to_stop_line(v)
+                    if 0 <= dist <= 240:
+                        tram_close_to_stop = True
+                        break
+            if tram_close_to_stop:
+                break
+
+        # Проверка плотного потока на проспекте
+        avenue_cars_close = False
+        for node in self.intersections:
+            for v in self.vehicles:
+                if v.direction in ('EB', 'WB'):
+                    dist = node.get_distance_to_stop_line(v)
+                    if 0 <= dist <= 180:
+                        avenue_cars_close = True
+                        break
+            if avenue_cars_close:
+                break
+
+        # 1. ФАЗА: ПРОСПЕКТ (AVENUE_GREEN)
+        if self.adaptive_phase == 'AVENUE_GREEN':
+            # Если боковые улицы пусты — проспект едет непрерывно
+            if total_cross_waiting == 0:
+                self.adaptive_timer = 3.0
+                return
+
+            # Трамвай подходит к стоп-линии — удерживаем коридор
+            if tram_close_to_stop and self.adaptive_time_in_phase < MAX_ADAPTIVE_AVENUE:
+                self.adaptive_timer = max(self.adaptive_timer, 2.5)
+                return
+
+            # Сбалансированный переход: выдержан минимальный зеленый проспекта (16с) и появился разрыв
+            # Либо сработал максимальный потолок проспекта (21с)
+            can_gap_switch = (self.adaptive_time_in_phase >= MIN_ADAPTIVE_AVENUE and not avenue_cars_close)
+            max_limit_reached = (self.adaptive_time_in_phase >= MAX_ADAPTIVE_AVENUE)
+
+            if can_gap_switch or max_limit_reached:
+                self.set_master_adaptive_phase('AVENUE_YELLOW', YELLOW_TIME)
+
+        # 2. ПЕРЕХОД: ЖЕЛТЫЙ ПРОСПЕКТА
+        elif self.adaptive_phase == 'AVENUE_YELLOW' and self.adaptive_timer <= 0:
+            # Срезка мертвого времени All-Red
+            boxes_clear = not any(node.is_inside_box(v) for node in self.intersections for v in self.vehicles)
+            all_red_dur = ADAPTIVE_ALL_RED if boxes_clear else ALL_RED_TIME
+            self.set_master_adaptive_phase('ALL_RED_1', all_red_dur)
+
+        # 3. ПЕРЕХОД: ВСЕМ КРАСНЫЙ -> ВКЛЮЧЕНИЕ БОКОВЫХ
+        elif self.adaptive_phase == 'ALL_RED_1' and self.adaptive_timer <= 0:
+            # Длина боковой фазы: от 6.0с до 9.0с (в среднем 7.5с)
+            allocated_cross = min(MAX_ADAPTIVE_CROSS, max(MIN_ADAPTIVE_CROSS, 5.5 + 0.9 * max_cross_q))
+            self.set_master_adaptive_phase('CROSS_GREEN', allocated_cross)
+
+        # 4. ФАЗА: БОКОВЫЕ УЛИЦЫ (CROSS_GREEN)
+        elif self.adaptive_phase == 'CROSS_GREEN':
+            # Проверяем зону разъезда (до 140 px от стоп-линии)
+            still_discharging = False
+            for node in self.intersections:
+                if any(v.target_intersection_idx == node.idx and v.direction in ('SB', 'NB') and 0 <= node.get_distance_to_stop_line(v) <= 140 for v in self.vehicles):
+                    still_discharging = True
                     break
 
-    def draw(self, screen, current_sim_time: float):
+            # Завершение фазы: очередь выехала после минимума 6.0 с, либо истек таймер
+            if (not still_discharging and self.adaptive_time_in_phase >= MIN_ADAPTIVE_CROSS) or self.adaptive_timer <= 0:
+                self.set_master_adaptive_phase('CROSS_YELLOW', YELLOW_TIME)
+
+        # 5. ПЕРЕХОД: ЖЕЛТЫЙ БОКОВЫХ
+        elif self.adaptive_phase == 'CROSS_YELLOW' and self.adaptive_timer <= 0:
+            boxes_clear = not any(node.is_inside_box(v) for node in self.intersections for v in self.vehicles)
+            all_red_dur = ADAPTIVE_ALL_RED if boxes_clear else ALL_RED_TIME
+            self.set_master_adaptive_phase('ALL_RED_2', all_red_dur)
+
+        # 6. ПЕРЕХОД: ВСЕМ КРАСНЫЙ -> ВОЗВРАТ ПРОСПЕКТУ
+        elif self.adaptive_phase == 'ALL_RED_2' and self.adaptive_timer <= 0:
+            self.set_master_adaptive_phase('AVENUE_GREEN', MIN_ADAPTIVE_AVENUE)
+
+    def spawn_traffic(self, sim_time: float):
+        if self.spawn_playback:
+            while self.playback_idx < len(self.spawn_playback):
+                rec = self.spawn_playback[self.playback_idx]
+                if rec['time'] <= sim_time:
+                    self.entry_queues[rec['queue_key']].append(dict(rec))
+                    self.playback_idx += 1
+                else:
+                    break
+            return
+
+        if random.random() < SPAWN_CHANCE_AVENUE:
+            direction = random.choice(['EB', 'WB'])
+            v_type = random.choices(['car', 'bus', 'tram'], weights=[0.60, 0.22, 0.18])[0]
+            lane_id = f"{direction}_{'tram' if v_type == 'tram' else 'car'}"
+            rec = {'time': sim_time, 'direction': direction, 'type': v_type, 'lane_id': lane_id,
+                   'node_idx': None, 'queue_key': lane_id}
+            self.spawn_log.append(rec)
+            self.entry_queues[lane_id].append(rec)
+
+        for k in range(NUM_INTERSECTIONS):
+            if random.random() < SPAWN_CHANCE_CROSS:
+                direction = random.choice(['SB', 'NB'])
+                v_type = random.choices(['car', 'bus'], weights=[0.8, 0.2])[0]
+                q_key = f"{direction}_{k}"
+                rec = {'time': sim_time, 'direction': direction, 'type': v_type, 'lane_id': q_key,
+                       'node_idx': k, 'queue_key': q_key}
+                self.spawn_log.append(rec)
+                self.entry_queues[q_key].append(rec)
+
+    def process_spawns(self):
+        for q_key, queue in self.entry_queues.items():
+            if not queue:
+                continue
+
+            item = queue[0]
+            v_type, direction = item['type'], item['direction']
+            v_len = TRAM_LENGTH if v_type == 'tram' else (BUS_LENGTH if v_type == 'bus' else CAR_LENGTH)
+
+            can_spawn = True
+            if direction == 'EB':
+                x, y = -v_len, self.get_lane_center_y(item['lane_id'])
+                for v in self.vehicles:
+                    if v.lane_id == item['lane_id'] and v.rect.left < v_len + COLLISION_BUFFER:
+                        can_spawn = False
+                        break
+            elif direction == 'WB':
+                x, y = SCREEN_WIDTH + v_len, self.get_lane_center_y(item['lane_id'])
+                for v in self.vehicles:
+                    if v.lane_id == item['lane_id'] and v.rect.right > SCREEN_WIDTH - (v_len + COLLISION_BUFFER):
+                        can_spawn = False
+                        break
+            elif direction == 'SB':
+                k = item['node_idx']
+                x, y = self.get_cross_center_x(k, 'SB'), -v_len
+                for v in self.vehicles:
+                    if v.lane_id == item['lane_id'] and v.rect.top < v_len + COLLISION_BUFFER:
+                        can_spawn = False
+                        break
+            elif direction == 'NB':
+                k = item['node_idx']
+                x, y = self.get_cross_center_x(k, 'NB'), SCREEN_HEIGHT + v_len
+                for v in self.vehicles:
+                    if v.lane_id == item['lane_id'] and v.rect.bottom > SCREEN_HEIGHT - (v_len + COLLISION_BUFFER):
+                        can_spawn = False
+                        break
+
+            if can_spawn:
+                queue.pop(0)
+                new_v = Vehicle(x, y, direction, item['lane_id'], v_type, origin_intersection=item['node_idx'])
+                self.vehicles.add(new_v)
+
+    def can_enter_intersection(self, v: Vehicle, node: IntersectionNode, all_v: List[Vehicle]) -> bool:
+        is_cross_dir = (lambda d: d in ('SB', 'NB')) if v.direction in ('EB', 'WB') else (lambda d: d in ('EB', 'WB'))
+        for other in all_v:
+            if is_cross_dir(other.direction) and node.is_inside_box(other):
+                return False
+
+        required_space = v.length + COLLISION_BUFFER
+
+        if v.direction == 'EB':
+            exit_x = node.box_right
+            limit_x = SCREEN_WIDTH + 200
+
+            if node.idx + 1 < NUM_INTERSECTIONS:
+                next_node = self.intersections[node.idx + 1]
+                next_light = next_node.light_tram.state if v.vehicle_type == 'tram' else next_node.light_avenue_eb.state
+                if next_light in ('red', 'yellow'):
+                    limit_x = next_node.box_left
+
+            for other in all_v:
+                if other != v and other.lane_id == v.lane_id and other.x > v.x:
+                    if other.stopped and other.rect.left >= exit_x:
+                        limit_x = min(limit_x, other.rect.left)
+
+            occupied_space = sum(
+                other.length + COLLISION_BUFFER
+                for other in all_v
+                if other != v and other.lane_id == v.lane_id and other.x > v.x and other.rect.right > exit_x and other.rect.left < limit_x
+            )
+            if ((limit_x - exit_x) - occupied_space) < required_space:
+                return False
+
+        elif v.direction == 'WB':
+            exit_x = node.box_left
+            limit_x = -200
+
+            if node.idx - 1 >= 0:
+                prev_node = self.intersections[node.idx - 1]
+                prev_light = prev_node.light_tram.state if v.vehicle_type == 'tram' else prev_node.light_avenue_wb.state
+                if prev_light in ('red', 'yellow'):
+                    limit_x = prev_node.box_right
+
+            for other in all_v:
+                if other != v and other.lane_id == v.lane_id and other.x < v.x:
+                    if other.stopped and other.rect.right <= exit_x:
+                        limit_x = max(limit_x, other.rect.right)
+
+            occupied_space = sum(
+                other.length + COLLISION_BUFFER
+                for other in all_v
+                if other != v and other.lane_id == v.lane_id and other.x < v.x and other.rect.left < exit_x and other.rect.right > limit_x
+            )
+            if ((exit_x - limit_x) - occupied_space) < required_space:
+                return False
+
+        elif v.direction == 'SB':
+            exit_y = node.box_bottom
+            limit_y = SCREEN_HEIGHT + 200
+            for other in all_v:
+                if other != v and other.lane_id == v.lane_id and other.y > v.y:
+                    if other.stopped and other.rect.top >= exit_y:
+                        limit_y = min(limit_y, other.rect.top)
+
+            occupied_space = sum(
+                other.length + COLLISION_BUFFER
+                for other in all_v
+                if other != v and other.lane_id == v.lane_id and other.y > v.y and other.rect.bottom > exit_y and other.rect.top < limit_y
+            )
+            if ((limit_y - exit_y) - occupied_space) < required_space:
+                return False
+
+        elif v.direction == 'NB':
+            exit_y = node.box_top
+            limit_y = -200
+            for other in all_v:
+                if other != v and other.lane_id == v.lane_id and other.y < v.y:
+                    if other.stopped and other.rect.bottom <= exit_y:
+                        limit_y = max(limit_y, other.rect.bottom)
+
+            occupied_space = sum(
+                other.length + COLLISION_BUFFER
+                for other in all_v
+                if other != v and other.lane_id == v.lane_id and other.y < v.y and other.rect.top < exit_y and other.rect.bottom > limit_y
+            )
+            if ((exit_y - limit_y) - occupied_space) < required_space:
+                return False
+
+        return True
+
+    def update_vehicle_logic(self, sim_time: float):
+        all_v = list(self.vehicles)
+
+        for v in all_v:
+            should_stop_light = False
+            should_stop_gridlock = False
+            k = v.target_intersection_idx
+
+            if k is not None and 0 <= k < NUM_INTERSECTIONS:
+                node = self.intersections[k]
+
+                if node.is_past_box(v):
+                    if v.direction == 'EB':
+                        v.target_intersection_idx += 1
+                        if v.target_intersection_idx >= NUM_INTERSECTIONS:
+                            v.target_intersection_idx = None
+                    elif v.direction == 'WB':
+                        v.target_intersection_idx -= 1
+                        if v.target_intersection_idx < 0:
+                            v.target_intersection_idx = None
+                    else:
+                        v.target_intersection_idx = None
+
+                elif not node.is_inside_box(v):
+                    dist_to_stop = node.get_distance_to_stop_line(v)
+
+                    if 0 <= dist_to_stop <= LIGHT_STOP_DISTANCE:
+                        if v.direction == 'EB':
+                            light_state = node.light_tram.state if v.vehicle_type == 'tram' else node.light_avenue_eb.state
+                        elif v.direction == 'WB':
+                            light_state = node.light_tram.state if v.vehicle_type == 'tram' else node.light_avenue_wb.state
+                        elif v.direction == 'SB':
+                            light_state = node.light_cross_sb.state
+                        else:
+                            light_state = node.light_cross_nb.state
+
+                        if light_state in ('red', 'yellow'):
+                            should_stop_light = True
+                        elif light_state == 'green':
+                            can_enter = self.can_enter_intersection(v, node, all_v)
+                            if not can_enter:
+                                should_stop_gridlock = True
+
+            v.stopped_by_light = should_stop_light
+            v.stopped_by_gridlock = should_stop_gridlock
+
+            should_stop_car = False
+            min_dist = float('inf')
+
+            for other in all_v:
+                if other == v or other.lane_id != v.lane_id:
+                    continue
+
+                d = float('inf')
+                if v.direction == 'EB' and other.rect.left >= v.rect.right:
+                    d = other.rect.left - v.rect.right
+                elif v.direction == 'WB' and other.rect.right <= v.rect.left:
+                    d = v.rect.left - other.rect.right
+                elif v.direction == 'SB' and other.rect.top >= v.rect.bottom:
+                    d = other.rect.top - v.rect.bottom
+                elif v.direction == 'NB' and other.rect.bottom <= v.rect.top:
+                    d = v.rect.top - other.rect.bottom
+
+                if d < min_dist:
+                    min_dist = d
+
+            if min_dist < COLLISION_BUFFER:
+                should_stop_car = True
+
+            v.stopped_by_car = should_stop_car
+            v.update_position(sim_time)
+
+            out_bounds = (
+                (v.direction == 'EB' and v.rect.left > SCREEN_WIDTH) or
+                (v.direction == 'WB' and v.rect.right < 0) or
+                (v.direction == 'SB' and v.rect.top > SCREEN_HEIGHT) or
+                (v.direction == 'NB' and v.rect.bottom < 0)
+            )
+
+            if out_bounds:
+                if v.wait_start_time is not None:
+                    v.total_wait_time += (sim_time - v.wait_start_time)
+                self.finished_vehicles.append(v)
+                v.kill()
+
+    def update(self, dt: float, sim_time: float):
+        self.spawn_traffic(sim_time)
+        self.process_spawns()
+
+        if self.mode == 'fixed':
+            for node in self.intersections:
+                node.update_fixed(dt)
+        else:
+            self.update_adaptive_coordination(dt)
+            for node in self.intersections:
+                node.update_lights_only(dt)
+
+        self.update_vehicle_logic(sim_time)
+
+    def draw(self, screen: pygame.Surface, sim_time: float, font_hud: pygame.font.Font, font_sm: pygame.font.Font):
         screen.fill(COLOR_BLACK)
 
-        pygame.draw.rect(screen, COLOR_GREY, (CROSS_LEFT, 0, TOTAL_ROAD_WIDTH, SCREEN_HEIGHT))
-        pygame.draw.rect(screen, COLOR_GREY, (0, CROSS_TOP, SCREEN_WIDTH, TOTAL_ROAD_WIDTH))
+        ave_top = AVENUE_Y - (TRAM_LANE_WIDTH + LANE_WIDTH)
+        ave_height = (TRAM_LANE_WIDTH + LANE_WIDTH) * 2
+        pygame.draw.rect(screen, COLOR_ROAD, (0, ave_top, SCREEN_WIDTH, ave_height))
 
-        if self.intersection_type == 'tram_line':
-            tram_lane_left = CENTER_X - TRAM_LANE_WIDTH
-            tram_lane_right = CENTER_X + TRAM_LANE_WIDTH
-            pygame.draw.rect(screen, COLOR_DARK_TRAM_ROAD, (tram_lane_left, 0, TRAM_LANE_WIDTH * 2, SCREEN_HEIGHT))
+        tram_top = AVENUE_Y - TRAM_LANE_WIDTH
+        pygame.draw.rect(screen, COLOR_TRAM_BALLAST, (0, tram_top, SCREEN_WIDTH, TRAM_LANE_WIDTH * 2))
+        for dy in [-HALF_TRAM - 5, -HALF_TRAM + 5, HALF_TRAM - 5, HALF_TRAM + 5]:
+            pygame.draw.line(screen, COLOR_RAIL, (0, AVENUE_Y + dy), (SCREEN_WIDTH, AVENUE_Y + dy), 2)
 
-            pygame.draw.line(screen, COLOR_BLACK, (CENTER_X - 5, 0), (CENTER_X - 5, SCREEN_HEIGHT), 2)
-            pygame.draw.line(screen, COLOR_BLACK, (CENTER_X + 5, 0), (CENTER_X + 5, SCREEN_HEIGHT), 2)
+        for x in INTERSECTION_X_COORDS:
+            pygame.draw.rect(screen, COLOR_ROAD, (x - LANE_WIDTH, 0, LANE_WIDTH * 2, SCREEN_HEIGHT))
 
-        for x in [CENTER_X - TRAM_LANE_WIDTH, CENTER_X + TRAM_LANE_WIDTH,
-                  LANE_CENTERS['N0C']['x'] + HALF_LANE, LANE_CENTERS['S0C']['x'] - HALF_LANE]:
-            pygame.draw.line(screen, COLOR_LANE_MARKER, (x, 0), (x, SCREEN_HEIGHT), 2)
+        pygame.draw.line(screen, COLOR_MARKING, (0, AVENUE_Y), (SCREEN_WIDTH, AVENUE_Y), 2)
+        pygame.draw.line(screen, COLOR_MARKING, (0, ave_top), (SCREEN_WIDTH, ave_top), 2)
+        pygame.draw.line(screen, COLOR_MARKING, (0, ave_top + ave_height), (SCREEN_WIDTH, ave_top + ave_height), 2)
 
-        pygame.draw.line(screen, COLOR_LANE_MARKER,
-                         (0, CENTER_Y), (SCREEN_WIDTH, CENTER_Y), 4)
-
-        pygame.draw.line(screen, COLOR_LANE_MARKER, (0, CENTER_Y - LANE_WIDTH), (SCREEN_WIDTH, CENTER_Y - LANE_WIDTH),
-                         2)
-        pygame.draw.line(screen, COLOR_LANE_MARKER, (0, CENTER_Y + LANE_WIDTH), (SCREEN_WIDTH, CENTER_Y + LANE_WIDTH),
-                         2)
-
-        pygame.draw.line(screen, COLOR_RED, (CROSS_LEFT, CROSS_BOTTOM), (CROSS_RIGHT, CROSS_BOTTOM), 4)
-        pygame.draw.line(screen, COLOR_RED, (CROSS_LEFT, CROSS_TOP), (CROSS_RIGHT, CROSS_TOP), 4)
-        pygame.draw.line(screen, COLOR_RED, (CROSS_LEFT, CROSS_TOP), (CROSS_LEFT, CROSS_BOTTOM), 4)
-        pygame.draw.line(screen, COLOR_RED, (CROSS_RIGHT, CROSS_TOP), (CROSS_RIGHT, CROSS_BOTTOM), 4)
+        for node in self.intersections:
+            node.draw(screen, font_sm)
+            pygame.draw.line(screen, COLOR_STOP_LINE, (node.box_left, ave_top), (node.box_left, ave_top + ave_height), 4)
+            pygame.draw.line(screen, COLOR_STOP_LINE, (node.box_right, ave_top), (node.box_right, ave_top + ave_height), 4)
+            pygame.draw.line(screen, COLOR_STOP_LINE, (node.box_left, node.box_top), (node.box_right, node.box_top), 4)
+            pygame.draw.line(screen, COLOR_STOP_LINE, (node.box_left, node.box_bottom), (node.box_right, node.box_bottom), 4)
 
         self.vehicles.draw(screen)
 
-        for light in self.lights_car_ns + self.lights_car_ew + self.lights_tram_ns:
-            light.draw(screen)
+        mode_title = "ЗЕЛЕНАЯ ВОЛНА (Синхронная)" if self.mode == 'fixed' else "КООРДИНИРОВАННЫЙ АДАПТИВ (Master-Optimization)"
+        hud_l = font_hud.render(f"Время: {sim_time:.1f}/{SIMULATION_DURATION}с | Режим: {mode_title}", True, COLOR_WHITE)
+        screen.blit(hud_l, (20, 15))
 
-        font = pygame.font.SysFont(None, 26)
+        hud_r = font_hud.render(f"Проехало: {len(self.finished_vehicles)} | ПДД 13.2: АКТИВНО", True, (200, 240, 200))
+        screen.blit(hud_r, (SCREEN_WIDTH - 440, 15))
 
-        time_text = font.render(
-            f"Время: {current_sim_time:.2f} с / {SIMULATION_DURATION} с | Режим: {self.mode.capitalize()}",
-            True, COLOR_WHITE)
-        screen.blit(time_text, (10, 10))
-
-        occupancy_text = font.render(
-            f"Перекресток: {self.intersection_type.capitalize()} | Занят: {'ДА' if self.is_crossing_occupied else 'НЕТ'}",
-            True, COLOR_WHITE)
-        screen.blit(occupancy_text, (SCREEN_WIDTH - 320, 10))
+        legend = font_sm.render("Синий: Авто | Оранжевый: Автобус | Фиолетовый: Трамвай | Сетка: Зона вафельницы", True, (180, 180, 180))
+        screen.blit(legend, (20, 42))
 
 
-def run_simulation(mode, intersection_type, spawn_data=None):
-    pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption(f"Симуляция светофора ({intersection_type.capitalize()} / {mode.capitalize()} режим)")
+# ==========================================
+# 6. РАННЕР СИМУЛЯЦИИ
+# ==========================================
+def show_transition_screen(screen: pygame.Surface, text: str, duration_sec: float = 2.0):
+    font = pygame.font.SysFont("Consolas", 24, bold=True)
+    start = time.time()
+    while time.time() - start < duration_sec:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return
+        screen.fill((25, 25, 30))
+        txt_surf = font.render(text, True, (240, 210, 60))
+        rect = txt_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+        screen.blit(txt_surf, rect)
+        pygame.display.flip()
+        pygame.time.delay(30)
+
+
+def run_simulation(screen: pygame.Surface, mode: str, playback_data: Optional[List[Dict[str, Any]]] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    pygame.event.clear()
+    pygame.display.set_caption(f"Проспект ({NUM_INTERSECTIONS} узла) - {mode.upper()}")
     clock = pygame.time.Clock()
+    font_hud = pygame.font.SysFont("Consolas", 17, bold=True)
+    font_sm = pygame.font.SysFont("Consolas", 13, bold=True)
 
-    intersection = Intersection(mode=mode, intersection_type=intersection_type, spawn_data=spawn_data)
-
-    start_time = time.time()
+    sim = ArterialProspectSimulation(mode=mode, spawn_playback=playback_data)
+    sim_time = 0.0
     running = True
 
-    while running and (time.time() - start_time) < SIMULATION_DURATION:
+    while running and sim_time < SIMULATION_DURATION:
         dt = clock.tick(FPS) / 1000.0
-        current_sim_time = time.time() - start_time
+        sim_time += dt
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
 
-        intersection.update(dt)
-
-        intersection.draw(screen, current_sim_time)
+        sim.update(dt, sim_time)
+        sim.draw(screen, sim_time, font_hud, font_sm)
         pygame.display.flip()
 
-    stats = intersection.stats
-    stats['ns_avg_green_time'] = intersection.light_stats['ns_total_green_time'] / intersection.light_stats[
-        'ns_cycles_count'] if intersection.light_stats['ns_cycles_count'] > 0 else 0
-    stats['ew_avg_green_time'] = intersection.light_stats['ew_total_green_time'] / intersection.light_stats[
-        'ew_cycles_count'] if intersection.light_stats['ew_cycles_count'] > 0 else 0
-    stats['ns_tram_avg_green_time'] = intersection.light_stats['ns_tram_total_green_time'] / intersection.light_stats[
-        'ns_cycles_count'] if intersection.light_stats['ns_cycles_count'] > 0 else 0
+    finished = sim.finished_vehicles
+    trams = [v for v in finished if v.vehicle_type == 'tram']
+    buses = [v for v in finished if v.vehicle_type == 'bus']
+    cars = [v for v in finished if v.vehicle_type == 'car']
+    avenue_v = [v for v in finished if v.direction in ('EB', 'WB')]
+    cross_v = [v for v in finished if v.direction in ('SB', 'NB')]
 
-    spawn_log = intersection.spawn_log if mode == 'fixed' else None
+    def safe_avg(lst: List[Vehicle]) -> float:
+        return sum(v.total_wait_time for v in lst) / len(lst) if lst else 0.0
 
-    pygame.quit()
-    return stats, spawn_log
+    stats = {
+        'total_finished': len(finished),
+        'avg_wait_total': safe_avg(finished),
+        'avg_wait_tram': safe_avg(trams),
+        'avg_wait_bus': safe_avg(buses),
+        'avg_wait_car': safe_avg(cars),
+        'avg_wait_avenue': safe_avg(avenue_v),
+        'avg_wait_cross': safe_avg(cross_v),
+        'avenue_finished': len(avenue_v),
+        'cross_finished': len(cross_v)
+    }
+
+    return stats, sim.spawn_log
 
 
 if __name__ == '__main__':
-    INTERSECTION_TYPE = 'tram_line'
-    FIXED_SPAWN_LOG = None
+    print("=" * 80)
+    print(f" СИМУЛЯЦИЯ ПРОСПЕКТА ({NUM_INTERSECTIONS} УЗЛА) | ЭКРАН: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
+    print("=" * 80)
 
-    print(f"Запускаем симуляцию для перекрестка '{INTERSECTION_TYPE}'...")
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
+    # 1. Запуск фиксированного режима
     random.seed(42)
+    print("\n>>> ЭТАП 1: Запуск режима 'ЗЕЛЕНАЯ ВОЛНА'...")
+    fixed_stats, recorded_spawns = run_simulation(screen, 'fixed')
+    print(f"Этап 1 завершен. Проехало: {fixed_stats['total_finished']} ТС.")
 
-    print("\n--- 1. ФИКСИРОВАННЫЙ режим (СЛУЧАЙНЫЙ, но записанный трафик) ---")
-    fixed_stats, FIXED_SPAWN_LOG = run_simulation('fixed', INTERSECTION_TYPE)
-    print("Симуляция в фиксированном режиме завершена.")
-    print(f"Записано {len(FIXED_SPAWN_LOG)} событий спавна для второго запуска.")
+    show_transition_screen(screen, "ЭТАП 1 ЗАВЕРШЕН. СТАРТ МАГИСТРАЛЬНОГО АДАПТИВА...", duration_sec=2.5)
 
+    # 2. Запуск адаптивного режима на идентичном трафике
     random.seed(None)
+    print("\n>>> ЭТАП 2: Запуск режима 'КООРДИНИРОВАННЫЙ АДАПТИВ' (100% повтор трафика)...")
+    adaptive_stats, _ = run_simulation(screen, 'adaptive', playback_data=recorded_spawns)
+    print(f"Этап 2 завершен. Проехало: {adaptive_stats['total_finished']} ТС.")
 
-    print("\n--- 2. АДАПТИВНЫЙ режим (Воспроизведение трафика из первого запуска) ---")
-    adaptive_stats, _ = run_simulation('adaptive', INTERSECTION_TYPE, spawn_data=FIXED_SPAWN_LOG)
-    print("Симуляция в адаптивном режиме завершена.")
+    pygame.quit()
 
-    print(
-        f"\n\n--- РЕЗУЛЬТАТЫ СРАВНЕНИЯ (Длительность: {SIMULATION_DURATION} сек | Кол-во ТС: {fixed_stats['total_vehicles']}) ---")
+    print("\n" + "=" * 80)
+    print(f"{'ПОКАЗАТЕЛЬ':<38} | {'ЗЕЛЕНАЯ ВОЛНА':<16} | {'АДАПТИВНЫЙ'}")
+    print("-" * 80)
 
+    metrics = [
+        ("Всего проехало ТС (шт)", 'total_finished', "{:.0f}"),
+        ("По проспекту сквозных (шт)", 'avenue_finished', "{:.0f}"),
+        ("По боковым улицам (шт)", 'cross_finished', "{:.0f}"),
+        ("Средняя задержка ВСЕХ ТС (сек)", 'avg_wait_total', "{:.2f}"),
+        ("Задержка НА ПРОСПЕКТЕ (сек)", 'avg_wait_avenue', "{:.2f}"),
+        ("Задержка НА БОКОВЫХ (сек)", 'avg_wait_cross', "{:.2f}"),
+        ("Задержка ТРАМВАЕВ (сек)", 'avg_wait_tram', "{:.2f}"),
+        ("Задержка АВТОБУСОВ (сек)", 'avg_wait_bus', "{:.2f}"),
+    ]
 
-    def format_stats(stats, mode, total_time):
-        total_vehicles = stats.get('total_vehicles', 0)
-        total_wait = stats.get('total_wait_time', 0.0)
-        total_tram_wait = stats.get('total_tram_wait_time', 0.0)
-        total_bus_wait = stats.get('total_bus_wait_time', 0.0)
+    for title, key, fmt in metrics:
+        v_fix = fmt.format(fixed_stats[key])
+        v_ada = fmt.format(adaptive_stats[key])
+        print(f"{title:<38} | {v_fix:<16} | {v_ada}")
+    print("=" * 80)
 
-        num_tram_finished = len([v for v in FIXED_SPAWN_LOG if
-                                 v['vehicle_type'] == 'tram'])
-        num_bus_finished = len([v for v in FIXED_SPAWN_LOG if v['vehicle_type'] == 'bus'])
+    diff_wait = ((fixed_stats['avg_wait_total'] - adaptive_stats['avg_wait_total']) / fixed_stats['avg_wait_total'] * 100) if fixed_stats['avg_wait_total'] > 0 else 0
+    diff_ave = ((fixed_stats['avg_wait_avenue'] - adaptive_stats['avg_wait_avenue']) / fixed_stats['avg_wait_avenue'] * 100) if fixed_stats['avg_wait_avenue'] > 0 else 0
+    diff_cross = ((fixed_stats['avg_wait_cross'] - adaptive_stats['avg_wait_cross']) / fixed_stats['avg_wait_cross'] * 100) if fixed_stats['avg_wait_cross'] > 0 else 0
 
-        avg_wait = total_wait / total_vehicles if total_vehicles > 0 else 0
-        avg_tram_wait = total_tram_wait / num_tram_finished if num_tram_finished > 0 else 0
-        avg_bus_wait = total_bus_wait / num_bus_finished if num_bus_finished > 0 else 0
+    print(f"\nИТОГОВЫЙ ВЫВОД:")
+    status_wait = f"снизилась на {diff_wait:.1f}%" if diff_wait >= 0 else f"выросла на {-diff_wait:.1f}%"
+    status_ave = f"снизилась на {diff_ave:.1f}%" if diff_ave >= 0 else f"выросла на {-diff_ave:.1f}%"
+    status_cross = f"снизилась на {diff_cross:.1f}%" if diff_cross >= 0 else f"выросла на {-diff_cross:.1f}%"
 
-        print(f"\n[{mode.capitalize()} режим | Перекресток: {INTERSECTION_TYPE.capitalize()}]")
-        print(f"  - Всего проехало ТС: {total_vehicles}")
-        print(f"  - СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ (ВСЕ ТС): {avg_wait:.2f} сек/ТС")
-        print(f"  - СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ ТРАМВАЕВ: {avg_tram_wait:.2f} сек/ТС")
-        print(f"  - СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ АВТОБУСОВ: {avg_bus_wait:.2f} сек/ТС")
-        print(f"  - СРЕДНИЙ ЦИКЛ ЗЕЛЕНОГО СВЕТА (NS Car): {stats.get('ns_avg_green_time', 0):.2f} сек")
-        print(f"  - СРЕДНИЙ ЦИКЛ ЗЕЛЕНОГО СВЕТА (EW Car): {stats.get('ew_avg_green_time', 0):.2f} сек")
-        if INTERSECTION_TYPE == 'tram_line':
-            print(f"  - СРЕДНИЙ ЦИКЛ ЗЕЛЕНОГО СВЕТА (NS Tram): {stats.get('ns_tram_avg_green_time', 0):.2f} сек")
-
-        return total_vehicles, avg_wait, avg_tram_wait, avg_bus_wait
-
-
-    total_fixed, avg_wait_fixed, avg_tram_fixed, avg_bus_fixed = format_stats(fixed_stats, 'фиксированный',
-                                                                              SIMULATION_DURATION)
-    total_adaptive, avg_wait_adaptive, avg_tram_adaptive, avg_bus_adaptive = format_stats(adaptive_stats, 'адаптивный',
-                                                                                          SIMULATION_DURATION)
-
-    if total_fixed > 0:
-        improvement_wait = ((avg_wait_fixed - avg_wait_adaptive) / avg_wait_fixed) * 100 if avg_wait_fixed > 0 else 0
-        improvement_tram = ((avg_tram_fixed - avg_tram_adaptive) / avg_tram_fixed) * 100 if avg_tram_fixed > 0 else 0
-        improvement_bus = ((avg_bus_fixed - avg_bus_adaptive) / avg_bus_fixed) * 100 if avg_bus_fixed > 0 else 0
-
-        print("\n--- ВЫВОД (ЭФФЕКТИВНОСТЬ АДАПТИВНОЙ СИСТЕМЫ при ОДИНАКОВОМ ТРАФИКЕ) ---")
-        print(f"1. Адаптивная система позволила сократить СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ (ВСЕ ТС) на {improvement_wait:.2f}%.")
-        if improvement_tram != 0:
-            print(
-                f"2. Адаптивная система позволила сократить СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ (ТРАМВАЕВ) на {improvement_tram:.2f}%.")
-        if improvement_bus != 0:
-            print(
-                f"3. Адаптивная система позволила сократить СРЕДНЕЕ ВРЕМЯ ОЖИДАНИЯ (АВТОБУСОВ) на {improvement_bus:.2f}%.")
-    else:
-        print("\nНе удалось сравнить результаты, так как в одной из симуляций не было движения.")
-    print("\n\n--- ИДЕЯ МАСШТАБИРОВАНИЯ СИМУЛЯЦИИ НА СЛОЖНЫЕ РОССИЙСКИЕ ПЕРЕКРЕСТКИ ---")
-    print(
-        "Для распространения этой симуляции на большинство перекрестков в России (с несколькими полосами, поворотными фазами и сложной логикой) необходимо перейти от простой двухфазной системы (NS/EW) к МОДУЛЬНОЙ МНОГОФАЗНОЙ СИСТЕМЕ УПРАВЛЕНИЯ:")
-    print(
-        "1. **Введение 'Фазы' как Объекта:** Вместо жестких 'ns_car'/'ew_car' определить объект TrafficPhase (например, 'N_прямо', 'E_поворот_налево'). Каждая фаза должна знать:")
-    print("   - Какие полосы (lane_key) она активирует (зеленый).")
-    print("   - Какие полосы (lane_key) она блокирует (красный/конфликт).")
-    print("   - Минимальное и максимальное время работы.")
-    print("2. **Адаптивный Выбор Фазы (Скоррестированное Адаптивное Управление):**")
-    print(
-        "   - Калькуляция 'Суммарного спроса' для каждой ПОТЕНЦИАЛЬНОЙ фазы (например, сумма очереди на полосах, которые она активирует, с учетом приоритета ОТ).")
-    print(
-        "   - Использование алгоритма, выбирающего СЛЕДУЮЩУЮ фазу, которая имеет наибольший спрос, но не нарушает минимальный цикл предыдущей фазы (VAP - Vehicle Actuated Programming).")
-    print(
-        "   - Добавление 'Защищенных Поворотов': фазы поворота налево должны иметь отдельный подсчет спроса и запускаться только при наличии машин на поворотной полосе.")
-    print(
-        "3. **Расширенная Логика 'Занятости Перекрестка':** Ввести зонирование для конфликтов. Вместо одного флага is_crossing_occupied использовать матрицу конфликтов (Conflict Matrix) между полосами. Это позволит ТС двигаться, если их траектория не пересекается с фазой, идущей в данный момент, что критически важно для многополосных перекрестков и пересечений трамвайных путей.")
-    print(
-        "4. **Моделирование Разметки и Траектории:** У каждой машины должна быть не только direction (N, S, E, W), но и turn_intent (straight, left, right), что влияет на то, в какой полосе она должна стоять и с какой фазой светофора она взаимодействует.")
-
-    print("\n\n*** ПЕРСПЕКТИВЫ РАЗВИТИЯ И ОЦЕНКА СЛОЖНОСТИ ***")
-    print(
-        "Текущая симуляция демонстрирует высокий потенциал адаптивного управления, но ее архитектура, основанная на жестких двухфазных циклах (NS/EW), не позволяет гибко управлять сложными поворотными фазами.")
-    print(
-        "Главная трудность для масштабирования - это отсутствие модульной системы фаз и детального моделирования траекторий поворота (пункт 1 и 4). Реализация этих элементов требует значительного времени на переработку базовой логики перекрестка и класса Vehicle.")
-    print(
-        "Мы считаем, что данный уровень сложности, а именно создание гибкого многофазного контроллера и полная переработка системы коллизий и траекторий, является задачей, требующей знаний и опыта, выходящих за рамки учебной программы 2-го курса.")
-    print(
-        "Это можно будет пофиксить в будущем, выделив ресурсы на полный рефакторинг с целью внедрения Модульной Многофазной Системы.")
+    print(f"1. Средняя задержка всех ТС: {status_wait} в адаптивном режиме.")
+    print(f"2. Задержка проспекта: {status_ave}.")
+    print(f"3. Задержка боковых улиц: {status_cross}.")
+    print("=" * 80)
